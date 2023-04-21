@@ -1,6 +1,8 @@
 using System.IO;
 using System.Net;
 using System.Threading.Tasks;
+using System.Web.Http;
+using Azure.Storage.Blobs;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Azure.WebJobs;
@@ -21,17 +23,18 @@ namespace BlobMagic
             _logger = log;
         }
 
-        [FunctionName("Function1")]
+        [FunctionName("WriteFile")]
         [OpenApiOperation(operationId: "Run", tags: new[] { "name" })]
         [OpenApiParameter(name: "name", In = ParameterLocation.Query, Required = true, Type = typeof(string), Description = "The **Name** parameter")]
         [OpenApiResponseWithBody(statusCode: HttpStatusCode.OK, contentType: "text/plain", bodyType: typeof(string), Description = "The OK response")]
         public async Task<IActionResult> Run(
-            [HttpTrigger(AuthorizationLevel.Anonymous, "get", "post", Route = null)] HttpRequest req)
+            [HttpTrigger(AuthorizationLevel.Anonymous, "get", "post", Route = null)] HttpRequest req,
+            [Blob("people", FileAccess.Write)] BlobContainerClient blobClient)
         {
-            _logger.LogInformation("C# HTTP trigger function processed a request.");
-
             string name = req.Query["name"];
-
+            if (string.IsNullOrWhiteSpace(name))
+                return new BadRequestErrorMessageResult("No name provided");
+            
             string requestBody = await new StreamReader(req.Body).ReadToEndAsync();
             dynamic data = JsonConvert.DeserializeObject(requestBody);
             name = name ?? data?.name;
@@ -39,6 +42,20 @@ namespace BlobMagic
             string responseMessage = string.IsNullOrEmpty(name)
                 ? "This HTTP triggered function executed successfully. Pass a name in the query string or in the request body for a personalized response."
                 : $"Hello, {name}. This HTTP triggered function executed successfully.";
+
+            using var ms = new MemoryStream();
+            using var writer = new StreamWriter(ms);
+
+            // Write some text to the StreamWriter
+            writer.Write(responseMessage);
+            writer.Flush();
+
+            ms.Position = 0;
+
+            blobClient.CreateIfNotExists();
+
+            //save the stream to blob file
+            blobClient.UploadBlob($"{name}.txt", ms);
 
             return new OkObjectResult(responseMessage);
         }
